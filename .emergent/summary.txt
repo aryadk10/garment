@@ -1,0 +1,189 @@
+<analysis>
+<original_problem_statement>
+The user has provided a series of extensive requirements to overhaul the ERP's production, shipment, and monitoring logic, followed by bug fixes and further feature requests.
+
+**Phase 1: Initial Overhaul & Refactor (from previous forks & message #72)**
+*   **Data Model**: Add a mandatory  field to Production PO items.
+*   **Production Logic**:
+    *   Production job quantity must be capped by available materials ().
+    *    and  shipments must trigger the automatic creation of **child production jobs** instead of new, independent jobs. This must happen upon vendor inspection.
+    *   Production jobs must support a parent-child hierarchy to ensure total production quantity never exceeds the original PO quantity.
+*   **UI/UX**:
+    *   Display the  in all production-related modules.
+    *   Implement expandable detail rows in all list pages (, , , etc.) to show item breakdowns.
+    *   Redesign Vendor Shipment UI to show child shipments nested under their parent.
+    *   Redesign Vendor Production Job UI to show the parent-child job hierarchy.
+
+**Phase 2: Bug Fixes, PDF Export & Dashboard Improvements (from messages #247 & #250)**
+*   **Critical Bug Fixes**:
+    1.  The  module was only counting progress from parent jobs, ignoring child jobs.
+    2.  The  module was not allowing shipment of items produced under child jobs.
+*   **New Feature: PDF Export**:
+    *   Implement a **backend-based** PDF generation feature for key operational documents (Production PO, Vendor Shipment, Buyer Shipment, Missing Material Request, Additional Material Shipment).
+    *   PDFs must have a standard professional layout (header, footer, tables, signature sections).
+*   **UI Improvements**:
+    1.  Update the  UI to correctly display the parent-child job hierarchy with expandable details.
+    2.  Improve the Production Job creation dropdown by categorizing POs into , , and .
+    3.  Improve the Buyer Shipment job selection dropdown to only show jobs with quantity available to ship.
+    4.  Add search functionality to these dropdowns.
+    5.  Update the ERP and Vendor Dashboards to display stats for the new features (e.g., pending requests, child jobs, material status).
+</original_problem_statement>
+
+**User's preferred language**: Indonesian
+
+**what currently exists?**
+The application is a full-stack Next.js/MongoDB ERP. It has recently undergone a massive refactoring of its core production logic. The system now supports a parent-child hierarchy for production jobs, which are automatically created when vendors inspect  or  shipments. This ensures production quantities cannot exceed the original PO quantity.
+
+The backend in  has been extensively modified to enforce this new logic, recalculate quantities by aggregating parent and child job data, and add new API endpoints for dashboard data. A new file  was created to handle PDF generation using .
+
+The frontend has been significantly updated:  shows the job hierarchy, and modules like , , and  have been updated with expandable rows to show item details. The ERP and Vendor dashboards were also updated with new KPI cards.
+
+However, the newly implemented PDF export feature is **broken**.
+
+**Last working item**:
+- Last item agent was working: Fixing a critical bug preventing the PDF export feature from working. The  library fails in the Next.js server environment because it cannot find its default font files (e.g., ) after webpack bundling.
+- Status: **BLOCKED**
+- Agent Testing Done: N (Backend tests were run but failed due to this issue).
+- Which testing method agent to use? backend testing agent
+- User Testing Done: N
+
+**All Pending/In progress Issue list**:
+- **Issue 1: (P0) PDF Export Feature is Broken**
+  - **Description**: API calls to  fail with an error . This is a known issue with libraries that use  in a Next.js server environment. It blocks the entire PDF export feature.
+  - **Attempted fixes**:
+    1.  Copied TTF fonts to  and explicitly used them in . This did not work as  still tried to load its internal default font.
+    2.  Modified  to add  to . This is the correct approach to prevent Next.js from bundling the library, but the agent got stuck after this step, possibly due to not restarting the server or another configuration issue.
+  - **Next debug checklist**:
+    1.  Verify that the  file correctly includes  in .
+    2.  Ensure the  service is restarted using nextjs: ERROR (not running)
+nextjs: started to apply the config changes.
+    3.  If it still fails, invoke the  as this is a complex environment/bundling issue where the agent has already failed multiple times.
+    4.  Once fixed, re-run the backend tests to confirm the PDF test case passes.
+  - **Why fix this issue and what will be achieved with the fix?**: This is a major feature requested by the user. Fixing it will unblock the entire operational document export functionality.
+  - **Status**: **IN PROGRESS**
+  - **Is recurring issue?** N
+  - **Should Test frontend/backend/both after fix?**: backend
+  - **Blocked on other issue**: None
+
+**In progress Task List**:
+- None. The agent is blocked by the PDF export bug.
+
+**Upcoming and Future Tasks**
+- **Upcoming Tasks:**
+    - **(P1) UI Improvement - Dropdowns**: Implement the categorized and searchable dropdowns as requested in message #247.
+        -   **Production Job Creation Dropdown**: Categorize POs into Not Started, Ongoing, Completed in .
+        -   **Buyer Shipment Dropdown**: Filter the list to only show jobs with  and add search functionality in .
+    - **(P2) PDF Export - Add Missing Documents**: The backend PDF route was built to be generic, but frontend buttons are still needed for:
+        -   Missing Material Request detail modal ().
+        -   Additional Material Shipment detail modal ().
+    - **(P3) UI Verification**: The user requested an improved  UI with expandable job hierarchy. The agent added expandable rows to many modules, but a specific check should be done on  to ensure it fully meets the user's visual and functional requirements for nesting.
+
+- **Future Tasks:**
+    - **(P4) Persistent File Storage**: The long-standing issue of using a volatile  directory for file attachments needs to be addressed by implementing a persistent solution (e.g., mounted volume, S3).
+
+**Completed work in this session**
+- **Production Logic Refactor & Bug Fixes**:
+  - Corrected  progress calculation to include child job production ().
+  - Fixed  logic to allow shipping of items produced from child jobs (, ).
+- **Data Model & Consistency**:
+  - Successfully added the  to all relevant production module tables and UIs (, , , etc.).
+  - Implemented a data migration endpoint () and ran it to align existing data with the new parent-child job logic.
+- **UI Improvements**:
+  - Implemented expandable detail rows in , , and .
+  - Updated the ERP () and Vendor () dashboards with new KPI cards reflecting the current system state.
+- **New Feature (Partially Implemented & Broken)**:
+  - Created a backend API for PDF generation ().
+  - Added Export PDF buttons to the , , and  detail modals.
+
+**Earlier issues found/mentioned but not fixed**
+- **Issue 1: Non-Persistent File Storage**
+  - **Debug checklist**: All file uploads (e.g., for defect reports) are saved to the local  directory, which will be lost on container restart. A persistent storage strategy (cloud storage like S3 or a persistent volume) needs to be designed and implemented.
+  - **Why to solve this issue and what will be achieved with this?**: Prevents critical data loss and makes the file upload features production-ready.
+  - **Should Test frontend/backend/both after fix**: both
+  - **Is recurring issue?** N
+
+**Known issue recurrence from previous fork**
+- None.
+
+**Code Architecture**
+pdfkit
+
+**Key Technical Concepts**
+- **Frontend**: Next.js 14, React, Tailwind CSS, shadcn/ui
+- **Backend**: Next.js API Routes. Logic is split between a monolithic  and a new .
+- **Database**: MongoDB
+- **Key Libraries**:  (for PDF generation, currently causing issues).
+
+**key DB schema**
+- :  (Now supports parent-child relationships).
+- : 
+- : 
+
+**changes in tech stack**
+-  was added as a dependency for PDF generation.
+
+**All files of reference**
+- : **CRITICAL FILE.** Contains the fixed logic for , , and the new dashboard endpoints.
+- : **CRITICAL & BROKEN.** The source of the current blocker.
+- : Modified in an attempt to fix the PDFKit issue. Must be checked.
+- : Updated ERP dashboard.
+- : Contains the updated Vendor Dashboard and several other UIs that were modified.
+
+**Areas that need refactoring**:
+- The monolithic  is becoming increasingly unmaintainable. The logic should be split into separate files by module.
+- The  directory for file storage must be replaced with a persistent solution.
+
+**key api endpoints**
+- : **BROKEN.** New endpoint for generating PDF documents.
+- : Logic was fixed to aggregate parent and child job progress.
+- : Logic was fixed to calculate  correctly.
+- : New endpoint for the ERP dashboard.
+- : New endpoint for the Vendor dashboard.
+- : Contains the logic to auto-create child production jobs.
+
+**Critical Info for New Agent**
+- **IMMEDIATE PRIORITY**: You are blocked by the PDF export feature () failing in the Next.js server environment. Your first task is to resolve this. The previous agent correctly identified that adding  to  in  is the right path.
+- **DEBUGGING STEPS**:
+    1.  Verify the  modification is correct.
+    2.  **Restart the Next.js server** with nextjs: stopped
+nextjs: started. This step is critical and may have been missed.
+    3.  If the issue persists, call the  immediately. Do not waste time in a loop trying to modify the PDF route code again.
+- Once the PDF bug is fixed, proceed with the Upcoming Tasks, starting with the dropdown UI improvements.
+
+**documents created in this job**
+- None.
+
+**Last 10 User Messages and any pending HUMAN messages**
+1.  **#359 - #407**: Agent is stuck debugging the PDFKit  module error. Multiple attempts to fix it by changing the PDF route code have failed. The agent correctly tried modifying  but is now in a loop. (IN PROGRESS)
+2.  **#353 - #358**: Agent tries to run backend tests, which fail because of the PDFKit issue. (IN PROGRESS)
+3.  **#325 - #352**: Agent implements the Dashboard improvements for both ERP and Vendor, updating backend APIs and frontend components. (DONE)
+4.  **#299 - #324**: Agent implements the PDF export feature, creating a new API route and adding buttons to the frontend. (DONE, but buggy)
+5.  **#285 - #298**: Agent implements the critical bug fixes for  and  in both the backend () and frontend (). (DONE)
+6.  **#281 - #284**: Agent installs  and starts implementing the prioritized tasks. (DONE)
+7.  **#251 - #280**: Agent reads all relevant files to understand the scope of the new bug fixes and features. (DONE)
+8.  **#250**: User provides clear priorities: 1) Bug Fixes, 2) UI Improvements, 3) PDF Export, 4) Dashboard Improvements. Confirms PDF should be backend-generated. (PENDING)
+9.  **#247**: User submits a very large new request detailing bugs in the just-completed logic (Distribusi Kerja, Buyer Shipment) and requests major new features (PDF Export, Dashboard Improvements, Dropdown Improvements). (PENDING)
+10. **#245**: Agent provides a summary of the massive refactor that implemented parent-child jobs and expandable rows. (DONE)
+
+**Project Health Check:**
+- **Broken**: The application is in a broken state. A major, user-requested feature (PDF Export) is non-functional and is causing backend test failures. This is a critical blocker.
+- **Mocked**: No mocked components.
+
+**3rd Party Integrations**
+- None.
+
+**Testing status**
+- Testing agent used after significant changes: YES. The last run failed due to the PDFKit bug.
+- Troubleshoot agent used after agent stuck in loop: NO. The agent should have used it.
+- Test files created: None.
+- Known regressions: The PDF Export feature is a regression, as it was partially implemented but is now broken.
+
+**Credentials to test flow:**
+- **Role**: Superadmin
+- **Username**: 
+- **Password**: 
+
+**What agent forgot to execute**
+- The agent got stuck in a loop trying to fix the  issue. It failed to call the  after multiple failed attempts, which is against the system prompt's instructions.
+- The agent has not yet implemented the UI improvements for the production job and buyer shipment dropdowns (categorization, filtering, search) which was part of the user's request in message #247.
+</analysis>
