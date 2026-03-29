@@ -1,0 +1,31 @@
+version: "3.9"
+
+services:
+  nextjs:
+    build: .
+    container_name: nextjs-app
+    restart: always
+    ports:
+      - "127.0.0.1:3000:3000" # hanya bisa diakses via Nginx
+    environment:
+      NODE_ENV: production
+      MONGO_URL: mongodb://admin:password123@mongo:27017/garment?authSource=admin
+      DB_NAME: garment
+      NEXT_PUBLIC_BASE_URL: https://domainkamu.com
+      CORS_ORIGINS: https://domainkamu.com
+    depends_on:
+      - mongo
+
+  mongo:
+    image: mongo:7
+    container_name: mongo-db
+    restart: always
+    volumes:
+      - mongo-data:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password123
+      MONGO_INITDB_DATABASE: garment
+
+volumes:
+  mongo-data:
