@@ -87,7 +87,7 @@ export default function Login({ onLogin }) {
             </button>
           </form>
 
-          <div className="mt-6 pt-5 border-t border-slate-100">
+          <div className="mt-6 pt-5 border-t border-slate-100 hidden">
             <p className="text-xs text-slate-400 text-center mb-3">Akun Demo:</p>
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div className="bg-slate-50 rounded-lg p-2">
