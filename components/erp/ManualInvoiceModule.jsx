@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { Plus, FileText, RefreshCw, Eye, Edit3, ChevronRight, AlertCircle, CheckCircle, Pencil, ArrowUpCircle, ArrowDownCircle, Trash2 } from 'lucide-react';
 import Modal from './Modal';
 import SearchableSelect from './SearchableSelect';
+import ImportExportPanel from './ImportExportPanel';
 
 const CATEGORY_COLORS = {
   VENDOR: 'bg-amber-100 text-amber-700 border border-amber-200',
@@ -226,11 +227,14 @@ export default function ManualInvoiceModule({ token, userRole }) {
           <h1 className="text-2xl font-bold text-slate-800">Invoice Manual</h1>
           <p className="text-slate-500 text-sm mt-1">Buat invoice manual dengan qty/harga yang bisa disesuaikan. Invoice manual menjadi dokumen resmi menggantikan invoice otomatis.</p>
         </div>
-        {canEdit && (
-          <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700">
-            <Plus className="w-4 h-4" /> Buat Invoice Manual
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          <ImportExportPanel token={token} importType={null} exportType="invoices" />
+          {canEdit && (
+            <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700">
+              <Plus className="w-4 h-4" /> Buat Invoice Manual
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Info box */}

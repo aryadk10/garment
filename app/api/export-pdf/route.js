@@ -473,6 +473,196 @@ async function exportProductionReturn(db, id, companySettings) {
 
 // ─── Route Handler ────────────────────────────────────────────────────────────
 
+async function exportReportProduction(db, companySettings, filters = {}) {
+  // Fetch production report data (same logic as reports/production endpoint)
+  const poQuery = {};
+  if (filters.date_from || filters.date_to) {
+    poQuery.created_at = {};
+    if (filters.date_from) poQuery.created_at.$gte = new Date(filters.date_from);
+    if (filters.date_to) { const d = new Date(filters.date_to); d.setHours(23,59,59,999); poQuery.created_at.$lte = d; }
+  }
+  if (filters.status) poQuery.status = filters.status;
+  
+  const pos = await db.collection('production_pos').find(poQuery).sort({ created_at: -1 }).toArray();
+  const rows = [];
+  
+  for (const po of pos) {
+    if (filters.vendor_id && po.vendor_id !== filters.vendor_id) continue;
+    const items = await db.collection('po_items').find({ po_id: po.id }).toArray();
+    
+    for (const item of items) {
+      if (filters.serial_number && item.serial_number !== filters.serial_number) continue;
+      
+      // Get production totals (parent + child jobs)
+      const jobItems = await db.collection('production_job_items').find({ po_item_id: item.id }).toArray();
+      let totalProduced = 0;
+      for (const ji of jobItems) {
+        totalProduced += ji.produced_qty || 0;
+        const parentJob = await db.collection('production_jobs').findOne({ id: ji.job_id });
+        if (parentJob) {
+          const childJobs = await db.collection('production_jobs').find({ parent_job_id: parentJob.id }).toArray();
+          for (const cj of childJobs) {
+            const cji = await db.collection('production_job_items').findOne({ job_id: cj.id, po_item_id: item.id });
+            if (cji) totalProduced += cji.produced_qty || 0;
+          }
+        }
+      }
+      
+      // Shipped to buyer
+      const buyerItems = await db.collection('buyer_shipment_items').find({ po_item_id: item.id }).toArray();
+      const totalShipped = buyerItems.reduce((s, b) => s + (b.qty_shipped || 0), 0);
+      
+      const garment = po.vendor_id ? await db.collection('garments').findOne({ id: po.vendor_id }) : null;
+      
+      rows.push({
+        tanggal: fmtDate(po.po_date || po.created_at),
+        no_po: po.po_number || '',
+        no_seri: item.serial_number || '',
+        kode_produk: item.sku || '',
+        nama_produk: item.product_name || '',
+        kategori: item.category || '',
+        size: item.size || '',
+        sku: item.sku || '',
+        warna: item.color || '',
+        output_qty: item.qty || 0,
+        garment: garment?.garment_name || po.vendor_name || '',
+        note: po.notes || '',
+        qty_sudah_diproduksi: totalProduced,
+        qty_belum_diproduksi: Math.max(0, (item.qty || 0) - totalProduced),
+        qty_sudah_dikirim: totalShipped,
+      });
+    }
+  }
+  
+  // Build PDF in landscape
+  const doc = new PDFDocument({
+    size: 'A4',
+    layout: 'landscape',
+    margins: { top: 40, bottom: 50, left: 30, right: 30 },
+    bufferPages: true,
+    autoFirstPage: true,
+  });
+  try {
+    doc.registerFont('Regular', FONT_REGULAR);
+    doc.registerFont('Bold', FONT_BOLD);
+    doc.font('Regular');
+  } catch (e) {
+    console.warn('TTF font fallback:', e.message);
+  }
+  const bufferPromise = collectBuffer(doc);
+  
+  // Header
+  const cName = companySettings.company_name || 'PT Garment ERP System';
+  try { doc.font('Bold'); } catch(e) {}
+  doc.fontSize(14).fillColor('#1e3a5f').text(cName, { align: 'center' });
+  try { doc.font('Regular'); } catch(e) {}
+  if (companySettings.pdf_header_line1) doc.fontSize(8).fillColor('#666').text(companySettings.pdf_header_line1, { align: 'center' });
+  if (companySettings.company_address) doc.fontSize(8).fillColor('#888').text(companySettings.company_address, { align: 'center' });
+  doc.moveDown(0.3);
+  doc.moveTo(30, doc.y).lineTo(812, doc.y).lineWidth(2).strokeColor('#1e3a5f').stroke();
+  doc.moveDown(0.3);
+  try { doc.font('Bold'); } catch(e) {}
+  doc.fontSize(12).fillColor('#1e3a5f').text('LAPORAN PRODUKSI', { align: 'center' });
+  try { doc.font('Regular'); } catch(e) {}
+  doc.fontSize(8).fillColor('#555').text(`Dicetak: ${fmtDate(new Date())}`, { align: 'center' });
+  doc.moveDown(0.4);
+  
+  // Table headers
+  const headers = ['NO', 'TANGGAL', 'NO-PO', 'NO-SERI', 'KODE', 'PRODUK', 'KAT', 'SIZE', 'WARNA', 'QTY', 'GARMENT', 'NOTE', 'PRODUKSI', 'BELUM', 'KIRIM'];
+  const colW = [22, 60, 52, 45, 50, 70, 35, 30, 40, 35, 60, 55, 42, 42, 42];
+  const startX = 30;
+  let y = doc.y + 3;
+  const rowH = 16;
+  const totalW = colW.reduce((a, b) => a + b, 0);
+  
+  function drawHeader(yPos) {
+    doc.rect(startX, yPos, totalW, rowH).fillColor('#1e3a5f').fill();
+    try { doc.font('Bold'); } catch(e) {}
+    doc.fontSize(6.5).fillColor('#ffffff');
+    let hx = startX;
+    headers.forEach((h, i) => {
+      doc.text(h, hx + 2, yPos + 4, { width: colW[i] - 4, align: 'center' });
+      hx += colW[i];
+    });
+    try { doc.font('Regular'); } catch(e) {}
+    return yPos + rowH;
+  }
+  
+  y = drawHeader(y);
+  
+  // Data rows
+  let totalQty = 0, totalProd = 0, totalBelum = 0, totalKirim = 0;
+  
+  rows.forEach((r, idx) => {
+    if (y + rowH > doc.page.height - 60) {
+      doc.addPage();
+      y = 40;
+      y = drawHeader(y);
+    }
+    
+    const bg = idx % 2 === 0 ? '#ffffff' : '#f5f8fc';
+    doc.rect(startX, y, totalW, rowH).fillColor(bg).fill();
+    doc.rect(startX, y, totalW, rowH).strokeColor('#dde3ea').lineWidth(0.3).stroke();
+    
+    const cells = [
+      String(idx + 1),
+      r.tanggal,
+      r.no_po,
+      r.no_seri,
+      r.kode_produk,
+      r.nama_produk,
+      r.kategori,
+      r.size,
+      r.warna,
+      fmtNum(r.output_qty),
+      r.garment,
+      (r.note || '').substring(0, 20),
+      fmtNum(r.qty_sudah_diproduksi),
+      fmtNum(r.qty_belum_diproduksi),
+      fmtNum(r.qty_sudah_dikirim),
+    ];
+    
+    doc.fontSize(6).fillColor('#222');
+    let cx = startX;
+    cells.forEach((cell, i) => {
+      doc.text(String(cell ?? '-'), cx + 2, y + 4, { width: colW[i] - 4, align: i === 0 || i >= 9 ? 'center' : 'left' });
+      cx += colW[i];
+    });
+    
+    totalQty += r.output_qty;
+    totalProd += r.qty_sudah_diproduksi;
+    totalBelum += r.qty_belum_diproduksi;
+    totalKirim += r.qty_sudah_dikirim;
+    
+    y += rowH;
+  });
+  
+  // Summary row
+  y += 4;
+  doc.rect(startX, y, totalW, rowH).fillColor('#e8edf5').fill();
+  doc.rect(startX, y, totalW, rowH).strokeColor('#1e3a5f').lineWidth(0.5).stroke();
+  try { doc.font('Bold'); } catch(e) {}
+  doc.fontSize(7).fillColor('#1e3a5f');
+  doc.text('TOTAL', startX + 2, y + 4, { width: 200, align: 'left' });
+  doc.text(fmtNum(totalQty), startX + colW.slice(0,9).reduce((a,b)=>a+b,0) + 2, y + 4, { width: colW[9] - 4, align: 'center' });
+  doc.text(fmtNum(totalProd), startX + colW.slice(0,12).reduce((a,b)=>a+b,0) + 2, y + 4, { width: colW[12] - 4, align: 'center' });
+  doc.text(fmtNum(totalBelum), startX + colW.slice(0,13).reduce((a,b)=>a+b,0) + 2, y + 4, { width: colW[13] - 4, align: 'center' });
+  doc.text(fmtNum(totalKirim), startX + colW.slice(0,14).reduce((a,b)=>a+b,0) + 2, y + 4, { width: colW[14] - 4, align: 'center' });
+  try { doc.font('Regular'); } catch(e) {}
+  
+  // Stats
+  y += rowH + 10;
+  doc.fontSize(8).fillColor('#555');
+  doc.text(`Total Record: ${rows.length}  |  Total Qty: ${fmtNum(totalQty)}  |  Sudah Produksi: ${fmtNum(totalProd)}  |  Belum: ${fmtNum(totalBelum)}  |  Sudah Kirim: ${fmtNum(totalKirim)}`, startX, y, { align: 'center', width: totalW });
+  
+  // Footer
+  addFooter(doc, companySettings);
+  doc.end();
+  
+  const buffer = await bufferPromise;
+  return { buffer, filename: `Laporan-Produksi-${new Date().toISOString().split('T')[0]}.pdf` };
+}
+
 export async function GET(req) {
   const user = authUser(req);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -481,7 +671,9 @@ export async function GET(req) {
   const type = url.searchParams.get('type');
   const id = url.searchParams.get('id');
 
-  if (!type || !id) return NextResponse.json({ error: 'Parameter type dan id diperlukan' }, { status: 400 });
+  // Report types don't need id
+  const isReportType = type && type.startsWith('report-');
+  if (!type || (!id && !isReportType)) return NextResponse.json({ error: 'Parameter type dan id diperlukan' }, { status: 400 });
 
   let client;
   try {
@@ -499,6 +691,17 @@ export async function GET(req) {
       case 'buyer-shipment':     result = await exportBuyerShipment(db, id, companySettings);     break;
       case 'material-request':   result = await exportMaterialRequest(db, id, companySettings);   break;
       case 'production-return':  result = await exportProductionReturn(db, id, companySettings);  break;
+      case 'report-production': {
+        const filters = {
+          date_from: url.searchParams.get('date_from'),
+          date_to: url.searchParams.get('date_to'),
+          vendor_id: url.searchParams.get('vendor_id'),
+          serial_number: url.searchParams.get('serial_number'),
+          status: url.searchParams.get('status'),
+        };
+        result = await exportReportProduction(db, companySettings, filters);
+        break;
+      }
       default:
         return NextResponse.json({ error: 'Tipe ekspor tidak dikenal' }, { status: 400 });
     }

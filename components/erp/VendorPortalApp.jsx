@@ -782,7 +782,7 @@ function VendorProductionJobs({ token, user }) {
                     </thead>
                     <tbody>
                       {detailJob.items.map(item => {
-                        const avail = item.available_qty || item.shipment_qty || 0;
+                        const avail = item.available_qty ?? item.shipment_qty ?? 0;
                         const pct = avail > 0 ? Math.round((item.produced_qty / avail) * 100) : 0;
                         return (
                           <tr key={item.id} className="border-t border-slate-100 hover:bg-slate-50">
@@ -902,7 +902,7 @@ function VendorProgress({ token, user }) {
           </thead>
           <tbody className="divide-y divide-slate-50">
             {items.map(item => {
-              const avail = item.available_qty || item.shipment_qty || 0;
+              const avail = item.available_qty ?? item.shipment_qty ?? 0;
               const pct = avail > 0 ? Math.round((item.produced_qty / avail) * 100) : 0;
               const sisa = Math.max(0, avail - item.produced_qty);
               const isDone = item.produced_qty >= avail && avail > 0;
@@ -1039,9 +1039,9 @@ function VendorProgress({ token, user }) {
                 ['SKU', selectedItem.sku || '-'],
                 ['Size', selectedItem.size || '-'],
                 ['Warna', selectedItem.color || '-'],
-                ['Material Tersedia', `${selectedItem.available_qty || selectedItem.shipment_qty || 0} pcs`],
+                ['Material Tersedia', `${selectedItem.available_qty ?? selectedItem.shipment_qty ?? 0} pcs`],
                 ['Sudah Diproduksi', `${selectedItem.produced_qty} pcs`],
-                ['Sisa (Maks Input)', `${Math.max(0, (selectedItem.available_qty || selectedItem.shipment_qty || 0) - selectedItem.produced_qty)} pcs`],
+                ['Sisa (Maks Input)', `${Math.max(0, (selectedItem.available_qty ?? selectedItem.shipment_qty ?? 0) - selectedItem.produced_qty)} pcs`],
               ].map(([l, v]) => (
                 <div key={l} className={`flex justify-between text-sm ${l === 'Serial / Batch' ? 'text-amber-700 font-medium' : ''}`}>
                   <span className="text-slate-500">{l}</span>
@@ -1058,13 +1058,13 @@ function VendorProgress({ token, user }) {
 
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">
-                Jumlah Selesai Hari Ini (pcs) * <span className="text-xs text-slate-400">maks: {Math.max(0, (selectedItem.available_qty || selectedItem.shipment_qty || 0) - selectedItem.produced_qty)} pcs</span>
+                Jumlah Selesai Hari Ini (pcs) * <span className="text-xs text-slate-400">maks: {Math.max(0, (selectedItem.available_qty ?? selectedItem.shipment_qty ?? 0) - selectedItem.produced_qty)} pcs</span>
               </label>
-              <input required type="number" min="1" max={Math.max(0, (selectedItem.available_qty || selectedItem.shipment_qty || 0) - selectedItem.produced_qty)}
+              <input required type="number" min="1" max={Math.max(0, (selectedItem.available_qty ?? selectedItem.shipment_qty ?? 0) - selectedItem.produced_qty)}
                 className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 text-right"
                 value={form.completed_quantity}
                 onChange={e => setForm(f => ({ ...f, completed_quantity: e.target.value }))}
-                placeholder={`0 – ${Math.max(0, (selectedItem.available_qty || selectedItem.shipment_qty || 0) - selectedItem.produced_qty)}`} />
+                placeholder={`0 – ${Math.max(0, (selectedItem.available_qty ?? selectedItem.shipment_qty ?? 0) - selectedItem.produced_qty)}`} />
             </div>
 
             <div>

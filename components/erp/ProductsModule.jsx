@@ -5,6 +5,7 @@ import DataTable from './DataTable';
 import Modal from './Modal';
 import StatusBadge from './StatusBadge';
 import ConfirmDialog from './ConfirmDialog';
+import ImportExportPanel from './ImportExportPanel';
 
 export default function ProductsModule({ token, userRole }) {
   const [products, setProducts] = useState([]);
@@ -168,11 +169,14 @@ export default function ProductsModule({ token, userRole }) {
           </div>
         ) : null}
         actions={
-          isSuperAdmin && (
-            <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
-              <Plus className="w-4 h-4" /> Tambah Produk
-            </button>
-          )
+          <div className="flex items-center gap-2">
+            <ImportExportPanel token={token} importType="products" exportType={null} onImportSuccess={() => fetchProducts()} />
+            {isSuperAdmin && (
+              <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
+                <Plus className="w-4 h-4" /> Tambah Produk
+              </button>
+            )}
+          </div>
         }
       />
 

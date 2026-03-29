@@ -8,6 +8,7 @@ import ConfirmDialog from './ConfirmDialog';
 import POWorkflowIndicator from './POWorkflowIndicator';
 import FileAttachmentPanel from './FileAttachmentPanel';
 import SearchableSelect from './SearchableSelect';
+import ImportExportPanel from './ImportExportPanel';
 
 const STATUS_OPTIONS = ['Draft', 'Confirmed', 'Distributed', 'In Production', 'Completed', 'Closed'];
 const CLOSE_REASONS = ['Under Production', 'Over Production', 'Price Adjustment', 'Customer Agreement', 'Other'];
@@ -275,9 +276,20 @@ export default function ProductionPOModule({ token, userRole }) {
         searchKeys={['po_number', 'customer_name']}
         onSearch={fetchPOs}
         expandedRow={expandedRowRender}
-        actions={isSuperAdmin && (
-          <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"><Plus className="w-4 h-4" /> Buat PO</button>
-        )}
+        actions={
+          <div className="flex items-center gap-2">
+            <ImportExportPanel 
+              token={token} 
+              importType="production-pos" 
+              exportType="production-pos" 
+              exportFilters={{ status: filterStatus }}
+              onImportSuccess={() => fetchPOs()} 
+            />
+            {isSuperAdmin && (
+              <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"><Plus className="w-4 h-4" /> Buat PO</button>
+            )}
+          </div>
+        }
       />
 
       {/* Create PO Modal */}

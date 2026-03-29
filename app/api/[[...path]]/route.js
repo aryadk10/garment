@@ -267,8 +267,8 @@ export async function GET(request, { params }) {
           dispatchMap[seq].items.push(item);
           dispatchMap[seq].total_qty += item.qty_shipped || 0;
           
-          // Track per po_item_id
-          const key = item.po_item_id || item.sku || item.id;
+          // Track per po_item_id — use internal UUID, NOT visible fields like sku
+          const key = item.po_item_id || item.id;
           if (!poItemTotals[key]) {
             poItemTotals[key] = { 
               po_item_id: item.po_item_id, sku: item.sku, product_name: item.product_name,
@@ -315,10 +315,10 @@ export async function GET(request, { params }) {
       const result = await Promise.all(shipments.map(async (s) => {
         const items = await db.collection('buyer_shipment_items').find({ shipment_id: s.id }).toArray();
         
-        // Calculate using FIXED ordered_qty per unique po_item
+        // Calculate using FIXED ordered_qty per unique po_item — use internal UUID
         const poItemMap = {};
         for (const item of items) {
-          const key = item.po_item_id || item.sku || item.id;
+          const key = item.po_item_id || item.id;
           if (!poItemMap[key]) {
             poItemMap[key] = { ordered_qty: item.ordered_qty || 0, shipped: 0 };
           }
@@ -458,7 +458,7 @@ export async function GET(request, { params }) {
       ]);
 
       const totalProducedGlobal = allJobItems.reduce((s, i) => s + (i.produced_qty || 0), 0);
-      const totalAvailableGlobal = allJobItems.reduce((s, i) => s + (i.available_qty || i.shipment_qty || 0), 0);
+      const totalAvailableGlobal = allJobItems.reduce((s, i) => s + (i.available_qty ?? i.shipment_qty ?? 0), 0);
       const globalProgressPct = totalAvailableGlobal > 0 ? Math.round((totalProducedGlobal / totalAvailableGlobal) * 100) : 0;
 
       // === Financial (with adjustments) ===
@@ -540,7 +540,7 @@ export async function GET(request, { params }) {
         ? await db.collection('production_job_items').find({ job_id: { $in: allJobIds } }).toArray()
         : [];
       const totalProduced = allJobItems.reduce((s, i) => s + (i.produced_qty || 0), 0);
-      const totalAvailable = allJobItems.reduce((s, i) => s + (i.available_qty || i.shipment_qty || 0), 0);
+      const totalAvailable = allJobItems.reduce((s, i) => s + (i.available_qty ?? i.shipment_qty ?? 0), 0);
 
       // Material stats
       const allShipmentIds = (await db.collection('vendor_shipments').find({ vendor_id: vendorId }).project({ id: 1, total_received: 1, total_missing: 1, inspection_status: 1 }).toArray());
@@ -733,9 +733,23 @@ export async function GET(request, { params }) {
           if (!po && ship.parent_shipment_id) {
             const parentShip = await db.collection('vendor_shipments').findOne({ id: ship.parent_shipment_id });
             if (parentShip) {
-              // Find matching item in parent shipment by sku
+              // Find matching item in parent shipment — prefer po_item_id match, then fall back to sku+size+color
               const parentItems = await db.collection('vendor_shipment_items').find({ shipment_id: parentShip.id }).toArray();
-              const matchingParent = parentItems.find(pi => pi.sku === si.sku || pi.product_name === si.product_name);
+              let matchingParent = null;
+              // First try: match by po_item_id (internal UUID)
+              if (si.po_item_id) {
+                matchingParent = parentItems.find(pi => pi.po_item_id === si.po_item_id);
+              }
+              // Fallback: match by sku+size+color combo (more specific than sku alone)
+              if (!matchingParent) {
+                matchingParent = parentItems.find(pi => 
+                  pi.sku === si.sku && pi.size === si.size && pi.color === si.color && pi.serial_number === si.serial_number
+                );
+              }
+              // Last resort: match by sku only
+              if (!matchingParent) {
+                matchingParent = parentItems.find(pi => pi.sku === si.sku || pi.product_name === si.product_name);
+              }
               if (matchingParent) {
                 po = matchingParent.po_id ? await db.collection('production_pos').findOne({ id: matchingParent.po_id }) : null;
                 poItem = matchingParent.po_item_id ? await db.collection('po_items').findOne({ id: matchingParent.po_item_id }) : null;
@@ -768,10 +782,19 @@ export async function GET(request, { params }) {
             if (parentJob) {
               const childJobs = await db.collection('production_jobs').find({ parent_job_id: parentJob.id }).toArray();
               for (const childJob of childJobs) {
-                const childJobItem = await db.collection('production_job_items').findOne({
-                  job_id: childJob.id,
-                  $or: [{ sku: si.sku }, { po_item_id: si.po_item_id || poItem?.id }]
-                });
+                // Match child job items by po_item_id (internal UUID) to avoid merging records with same visible fields
+                let childJobItem = null;
+                const targetPoItemId = si.po_item_id || poItem?.id;
+                if (targetPoItemId) {
+                  childJobItem = await db.collection('production_job_items').findOne({
+                    job_id: childJob.id, po_item_id: targetPoItemId
+                  });
+                }
+                if (!childJobItem && !targetPoItemId && si.id) {
+                  childJobItem = await db.collection('production_job_items').findOne({
+                    job_id: childJob.id, vendor_shipment_item_id: si.id
+                  });
+                }
                 if (childJobItem) produced_qty += (childJobItem.produced_qty || 0);
               }
             }
@@ -783,27 +806,41 @@ export async function GET(request, { params }) {
             : null;
           let received_qty = 0, missing_qty = 0;
           if (inspection) {
-            const inspItem = await db.collection('vendor_material_inspection_items').findOne({
+            // Match by shipment_item_id FIRST (internal UUID - guaranteed unique)
+            let inspItem = await db.collection('vendor_material_inspection_items').findOne({
               inspection_id: inspection.id,
-              $or: [{ shipment_item_id: si.id }, { sku: si.sku }]
+              shipment_item_id: si.id
             });
-            received_qty = inspItem?.received_qty || si.qty_sent;
-            missing_qty = inspItem?.missing_qty || 0;
+            // Only fall back to sku+size+color if no shipment_item_id match
+            if (!inspItem) {
+              inspItem = await db.collection('vendor_material_inspection_items').findOne({
+                inspection_id: inspection.id,
+                sku: si.sku, size: si.size || '', color: si.color || ''
+              });
+            }
+            received_qty = inspItem?.received_qty ?? si.qty_sent;
+            missing_qty = inspItem?.missing_qty ?? 0;
           } else {
             received_qty = ship.status === 'Received' ? si.qty_sent : 0;
           }
 
-          // Defect qty
+          // Defect qty — match by po_item_id if available, then fall back to sku+po_id
+          const defectMatch = (si.po_item_id || poItem?.id)
+            ? { po_item_id: si.po_item_id || poItem?.id }
+            : { sku: si.sku || '', po_id: si.po_id || po?.id || '' };
           const defectAgg = await db.collection('material_defect_reports').aggregate([
-            { $match: { sku: si.sku || '', po_id: si.po_id || po?.id || '' } },
+            { $match: defectMatch },
             { $group: { _id: null, total: { $sum: '$defect_qty' } } }
           ]).toArray();
           const defect_qty = defectAgg[0]?.total || 0;
           const available_qty = Math.max(0, received_qty - defect_qty);
 
-          // Additional/replacement requested qty
-          const addlReqs = await db.collection('material_requests').find({ original_shipment_id: ship.id, request_type: 'ADDITIONAL', sku: si.sku || '' }).toArray();
-          const replReqs = await db.collection('material_requests').find({ original_shipment_id: ship.id, request_type: 'REPLACEMENT', sku: si.sku || '' }).toArray();
+          // Additional/replacement requested qty — match by shipment_item_id if available
+          const reqMatch = { original_shipment_id: ship.id };
+          if (si.id) reqMatch.shipment_item_id = si.id;
+          else reqMatch.sku = si.sku || '';
+          const addlReqs = await db.collection('material_requests').find({ ...reqMatch, request_type: 'ADDITIONAL' }).toArray();
+          const replReqs = await db.collection('material_requests').find({ ...reqMatch, request_type: 'REPLACEMENT' }).toArray();
           const additional_requested = addlReqs.reduce((s, r) => s + (r.requested_qty || 0), 0);
           const replacement_requested = replReqs.reduce((s, r) => s + (r.requested_qty || 0), 0);
 
@@ -840,10 +877,11 @@ export async function GET(request, { params }) {
       const mergedRows = [];
       const normalRowsByPoItem = {};
       
-      // First pass: identify normal rows
+      // First pass: identify normal rows — keyed by internal po_item_id (UUID), NOT by visible fields
       for (const row of flatRows) {
         if (row.shipment_type === 'NORMAL') {
-          const key = row.po_id + '|' + (row.serial_number || '') + '|' + row.sku;
+          // Use po_item_id as unique key to avoid merging records with same visible fields
+          const key = row.po_item_id || row.id;
           if (!normalRowsByPoItem[key]) normalRowsByPoItem[key] = row;
           mergedRows.push(row);
         }
@@ -852,7 +890,8 @@ export async function GET(request, { params }) {
       // Second pass: merge additional/replacement into parent or add as separate
       for (const row of flatRows) {
         if (row.shipment_type !== 'NORMAL') {
-          const key = row.po_id + '|' + (row.serial_number || '') + '|' + row.sku;
+          // Match by po_item_id to find the correct parent row
+          const key = row.po_item_id || row.id;
           const parentRow = normalRowsByPoItem[key];
           if (parentRow) {
             // Merge: add the additional shipment qty to received
@@ -944,7 +983,7 @@ export async function GET(request, { params }) {
         const enrichedItems = await Promise.all(items.map(async item => {
           const defects = await db.collection('material_defect_reports').find({ job_item_id: item.id }).toArray();
           const totalDefect = defects.reduce((s, d) => s + (d.defect_qty || 0), 0);
-          const effectiveAvailable = Math.max(0, (item.available_qty || item.shipment_qty || 0) - totalDefect);
+          const effectiveAvailable = Math.max(0, (item.available_qty ?? item.shipment_qty ?? 0) - totalDefect);
           return { ...item, total_defect_qty: totalDefect, effective_available_qty: effectiveAvailable };
         }));
         const childJobs = await db.collection('production_jobs').find({ parent_job_id: path[1] }).toArray();
@@ -964,11 +1003,11 @@ export async function GET(request, { params }) {
         const childJobs = await db.collection('production_jobs').find({ parent_job_id: j.id }).toArray();
         // Aggregate quantities including child jobs
         let totalOrdered = items.reduce((s, i) => s + (i.ordered_qty || 0), 0);
-        let totalAvailable = items.reduce((s, i) => s + (i.available_qty || i.shipment_qty || 0), 0);
+        let totalAvailable = items.reduce((s, i) => s + (i.available_qty ?? i.shipment_qty ?? 0), 0);
         let totalProduced = items.reduce((s, i) => s + (i.produced_qty || 0), 0);
         for (const child of childJobs) {
           const childItems = await db.collection('production_job_items').find({ job_id: child.id }).toArray();
-          totalAvailable += childItems.reduce((s, i) => s + (i.available_qty || i.shipment_qty || 0), 0);
+          totalAvailable += childItems.reduce((s, i) => s + (i.available_qty ?? i.shipment_qty ?? 0), 0);
           totalProduced += childItems.reduce((s, i) => s + (i.produced_qty || 0), 0);
         }
         const serialNumbers = [...new Set(items.map(i => i.serial_number).filter(Boolean))];
@@ -995,14 +1034,15 @@ export async function GET(request, { params }) {
       const childJobs = await db.collection('production_jobs').find({ parent_job_id: jobId }).toArray();
       const childJobIds = childJobs.map(c => c.id);
 
-      // Load child job items grouped by sku for merging
-      const childItemsBySkuPo = {};
+      // Load child job items grouped by po_item_id for merging (using internal UUID)
+      const childItemsByPoItem = {};
       for (const cjId of childJobIds) {
         const cjItems = await db.collection('production_job_items').find({ job_id: cjId }).toArray();
         for (const ci of cjItems) {
-          const key = `${ci.sku || ci.product_name}|${ci.po_item_id || ''}`;
-          if (!childItemsBySkuPo[key]) childItemsBySkuPo[key] = [];
-          childItemsBySkuPo[key].push(ci);
+          // Use po_item_id as unique key; fall back to own id to avoid merging different records
+          const key = ci.po_item_id || ci.id;
+          if (!childItemsByPoItem[key]) childItemsByPoItem[key] = [];
+          childItemsByPoItem[key].push(ci);
         }
       }
 
@@ -1010,9 +1050,9 @@ export async function GET(request, { params }) {
         const progressHistory = await db.collection('production_progress')
           .find({ job_item_id: item.id }).sort({ progress_date: -1 }).toArray();
 
-        // Child job produced_qty for same SKU
-        const key = `${item.sku || item.product_name}|${item.po_item_id || ''}`;
-        const childItems = childItemsBySkuPo[key] || [];
+        // Child job produced_qty for same po_item (matched by internal UUID)
+        const key = item.po_item_id || item.id;
+        const childItems = childItemsByPoItem[key] || [];
         const child_produced_qty = childItems.reduce((s, ci) => s + (ci.produced_qty || 0), 0);
         const total_produced_qty = (item.produced_qty || 0) + child_produced_qty;
 
@@ -1065,16 +1105,22 @@ export async function GET(request, { params }) {
           const po = job.po_id ? await db.collection('production_pos').findOne({ id: job.po_id }) : null;
           
           for (const item of items) {
-            // Get child job production for this same po_item
+            // Get child job production for this same po_item — match by internal UUID only
             let childProduced = 0;
             for (const cj of childJobs) {
-              const cji = await db.collection('production_job_items').findOne({ 
-                job_id: cj.id, 
-                $or: [
-                  { po_item_id: item.po_item_id },
-                  { sku: item.sku, serial_number: item.serial_number }
-                ]
-              });
+              let cji = null;
+              if (item.po_item_id) {
+                // Primary: match by po_item_id (internal UUID - guaranteed unique)
+                cji = await db.collection('production_job_items').findOne({ 
+                  job_id: cj.id, po_item_id: item.po_item_id
+                });
+              }
+              // Only fall back to id-based match if no po_item_id at all
+              if (!cji && !item.po_item_id && item.vendor_shipment_item_id) {
+                cji = await db.collection('production_job_items').findOne({ 
+                  job_id: cj.id, vendor_shipment_item_id: item.vendor_shipment_item_id
+                });
+              }
               if (cji) childProduced += cji.produced_qty || 0;
             }
             
@@ -1807,11 +1853,19 @@ export async function POST(request, { params }) {
         // Use inspection received_qty as available_qty (not PO qty or sent qty)
         let availableQty = si.qty_sent;
         if (inspection) {
-          const inspItem = await db.collection('vendor_material_inspection_items').findOne({
+          // Match by shipment_item_id FIRST (internal UUID - guaranteed unique)
+          let inspItem = await db.collection('vendor_material_inspection_items').findOne({
             inspection_id: inspection.id,
-            $or: [{ shipment_item_id: si.id }, { sku: si.sku }]
+            shipment_item_id: si.id
           });
-          if (inspItem) availableQty = inspItem.received_qty || si.qty_sent;
+          // Only fall back to sku+size+color if no shipment_item_id match
+          if (!inspItem) {
+            inspItem = await db.collection('vendor_material_inspection_items').findOne({
+              inspection_id: inspection.id,
+              sku: si.sku, size: si.size || '', color: si.color || ''
+            });
+          }
+          if (inspItem) availableQty = inspItem.received_qty ?? si.qty_sent;
         }
         const ji = {
           id: uuidv4(), job_id: jobId, job_number: jobNumber,
@@ -1852,8 +1906,7 @@ export async function POST(request, { params }) {
         if (qtyToday <= 0) return NextResponse.json({ error: 'Jumlah produksi harus lebih dari 0' }, { status: 400 });
 
         // Validate: total produced cannot exceed available_qty (received - defect)
-        // available_qty = jobItem.available_qty || jobItem.shipment_qty
-        const maxQty = jobItem.available_qty || jobItem.shipment_qty;
+        const maxQty = jobItem.available_qty ?? jobItem.shipment_qty ?? 0;
         const newTotal = (jobItem.produced_qty || 0) + qtyToday;
         if (newTotal > maxQty) {
           return NextResponse.json({ error: `Total produksi (${newTotal}) melebihi material tersedia (${maxQty} pcs). Material tersedia = Diterima - Cacat.` }, { status: 400 });
@@ -2030,10 +2083,18 @@ export async function POST(request, { params }) {
             if (parentJob) {
               const childJobs = await db.collection('production_jobs').find({ parent_job_id: parentJob.id }).toArray();
               for (const cj of childJobs) {
-                const cji = await db.collection('production_job_items').findOne({
-                  job_id: cj.id,
-                  $or: [{ sku: jobItem.sku }, { po_item_id: jobItem.po_item_id }]
-                });
+                // Match child job items by po_item_id (internal UUID) — avoid sku-based matching
+                let cji = null;
+                if (jobItem.po_item_id) {
+                  cji = await db.collection('production_job_items').findOne({
+                    job_id: cj.id, po_item_id: jobItem.po_item_id
+                  });
+                }
+                if (!cji && !jobItem.po_item_id) {
+                  cji = await db.collection('production_job_items').findOne({
+                    job_id: cj.id, vendor_shipment_item_id: jobItem.vendor_shipment_item_id
+                  });
+                }
                 if (cji) totalProducedForItem += (cji.produced_qty || 0);
               }
             }
@@ -2432,8 +2493,9 @@ export async function POST(request, { params }) {
           const shipItemsForChild = await db.collection('vendor_shipment_items').find({ shipment_id: body.shipment_id }).toArray();
           for (const si of shipItemsForChild) {
             const poItem = si.po_item_id ? await db.collection('po_items').findOne({ id: si.po_item_id }) : null;
-            const matchedInspItem = items.find(ii => ii.shipment_item_id === si.id || ii.sku === si.sku);
-            const availableQty = matchedInspItem ? (Number(matchedInspItem.received_qty) || 0) : si.qty_sent;
+            const matchedInspItem = items.find(ii => ii.shipment_item_id === si.id) || 
+              items.find(ii => ii.sku === si.sku && ii.size === (si.size || '') && ii.color === (si.color || ''));
+            const availableQty = matchedInspItem ? (Number(matchedInspItem.received_qty) ?? 0) : si.qty_sent;
             await db.collection('production_job_items').insertOne({
               id: uuidv4(), job_id: childJobId, job_number: childJobNumber,
               po_item_id: si.po_item_id || null,
@@ -2543,15 +2605,22 @@ export async function POST(request, { params }) {
         const inspection = await db.collection('vendor_material_inspections').findOne({ shipment_id: job.vendor_shipment_id });
         const jobItems = await db.collection('production_job_items').find({ job_id: job.id }).toArray();
         for (const ji of jobItems) {
-          let newAvailableQty = ji.available_qty; // preserve if already set
-          if (!newAvailableQty && inspection) {
-            const inspItem = await db.collection('vendor_material_inspection_items').findOne({
+          // ALWAYS recalculate available_qty from inspection data
+          let newAvailableQty = ji.shipment_qty; // default to shipment qty
+          if (inspection) {
+            // Match by shipment_item_id first (internal UUID), then sku+size+color
+            let inspItem = await db.collection('vendor_material_inspection_items').findOne({
               inspection_id: inspection.id,
-              $or: [{ shipment_item_id: ji.vendor_shipment_item_id }, { sku: ji.sku }]
+              shipment_item_id: ji.vendor_shipment_item_id
             });
-            if (inspItem) newAvailableQty = inspItem.received_qty || ji.shipment_qty;
+            if (!inspItem && ji.sku) {
+              inspItem = await db.collection('vendor_material_inspection_items').findOne({
+                inspection_id: inspection.id,
+                sku: ji.sku, size: ji.size || '', color: ji.color || ''
+              });
+            }
+            if (inspItem) newAvailableQty = inspItem.received_qty ?? ji.shipment_qty;
           }
-          if (!newAvailableQty) newAvailableQty = ji.shipment_qty;
           // Ensure serial_number is set from po_item if missing
           let serialNumber = ji.serial_number;
           if (!serialNumber && ji.po_item_id) {

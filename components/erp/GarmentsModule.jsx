@@ -5,6 +5,7 @@ import DataTable from './DataTable';
 import Modal from './Modal';
 import StatusBadge from './StatusBadge';
 import ConfirmDialog from './ConfirmDialog';
+import ImportExportPanel from './ImportExportPanel';
 
 export default function GarmentsModule({ token, userRole }) {
   const [garments, setGarments] = useState([]);
@@ -117,11 +118,14 @@ export default function GarmentsModule({ token, userRole }) {
         searchKeys={['garment_code', 'garment_name', 'location']}
         onSearch={fetchGarments}
         actions={
-          isSuperAdmin && (
-            <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors">
-              <Plus className="w-4 h-4" /> Tambah Vendor
-            </button>
-          )
+          <div className="flex items-center gap-2">
+            <ImportExportPanel token={token} importType="garments" exportType={null} onImportSuccess={() => fetchGarments()} />
+            {isSuperAdmin && (
+              <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors">
+                <Plus className="w-4 h-4" /> Tambah Vendor
+              </button>
+            )}
+          </div>
         }
       />
 

@@ -1,52 +1,68 @@
-## Latest Testing Results (Bug Fix & UI Consistency Patch - Mar 2026)
+## Latest Testing Results (Data Conflict Fix + Import/Export - Feb 2026)
 
 ### Changes Implemented
 
-#### BUG FIX #1: Additional Shipment → Undefined Rows in Distribusi Kerja
-- Backend `distribusi-kerja` endpoint completely rewritten
-- Additional/replacement shipment items now inherit PO identity from parent shipment
-- Invalid records (no valid PO mapping) are excluded from main hierarchy
-- Invalid records returned separately in `invalid_records` array
-- Additional shipment items merged into parent PO line (same po_id + serial_number + sku)
+#### Phase 1: BUG FIX — Data Conflict (Non-Unique Visible Fields)
+- Fixed ALL locations where records with identical visible fields (SKU, Serial Number, Size, Color) were incorrectly merged
+- Changed merge/grouping keys from composite visible fields (po_id|serial_number|sku) to internal UUIDs (po_item_id or item id)
+- **Files changed**: `/app/app/api/[[...path]]/route.js`
+- **Fixed locations**:
+  1. Distribusi Kerja merge key: `po_id|serial|sku` → `po_item_id || id`
+  2. Buyer Shipment cumulative tracking: removed `sku` fallback, now uses `po_item_id || id`
+  3. Production Monitoring V2 child job matching: removed `sku+serial_number` fallback, uses `po_item_id` only
+  4. Production Job Items grouping: removed `sku|po_item_id` key, uses `po_item_id || id`
+  5. Buyer Shipment POST child job matching: removed `sku` matching, uses `po_item_id` only
+  6. Distribusi Kerja child job matching: removed `sku` fallback, uses `po_item_id` only
+  7. Parent shipment lookup: added multi-step matching (po_item_id → sku+size+color+serial → sku fallback)
 
-#### BUG FIX #2: Buyer Shipment Cumulative Qty Wrong
-- Backend `buyer-shipments` GET enhanced:
-  - Groups items by `po_item_id` to use FIXED original ordered_qty as denominator
-  - Returns `total_ordered`, `total_shipped`, `remaining`, `progress_pct` (backend-calculated)
-  - Detail endpoint returns `dispatches` (grouped by dispatch_seq), `summary_items` (per-SKU cumulative)
-  - List endpoint returns `dispatch_count` and correct progress
+#### Phase 2: Import Data Feature
+- **New file**: `/app/app/api/import-data/route.js` — POST endpoint for importing Excel data
+  - `type=products`: Import products with variants (parent-child relationship, grouped by product_code)
+  - `type=garments`: Import vendors with auto-generated login accounts
+  - `type=production-pos`: Import POs with items (grouped by PO+vendor+date)
+- **New file**: `/app/app/api/import-template/route.js` — GET endpoint for template Excel download
+  - `?type=products` → template with product + variant columns + Panduan sheet
+  - `?type=garments` → template with vendor columns + Panduan sheet
+  - `?type=production-pos` → template with PO + item columns + Panduan sheet
 
-#### BUG FIX #3: Buyer Shipment History All Dispatches
-- Detail endpoint returns all dispatches with cumulative tracking
-- Each dispatch shows: dispatch_seq, date, items, total_qty, cumulative_shipped
-- Frontend displays dispatch history with running cumulative
+#### Phase 3: Excel Export Feature
+- **New file**: `/app/app/api/export-excel/route.js` — GET endpoint for Excel export
+  - `?type=production-pos` → Production PO with items
+  - `?type=vendor-shipments` → Vendor Shipments with items
+  - `?type=buyer-shipments` → Buyer Shipments with items
+  - `?type=report-production` → Production Report (same as PDF report)
+  - `?type=report-financial` → Financial Report with adjustments
+  - `?type=report-shipment` → Shipment Report (vendor + buyer)
+  - `?type=invoices` → Invoice export with items
+  - Supports filters: date_from, date_to, vendor_id, status
 
-#### UI FIX #4: Distribusi Kerja Valid Rows Only
-- Shipment type badge (NORMAL/ADDITIONAL/REPLACEMENT) shown per item
-- PO date displayed at PO level
-- Invalid records shown in separate red error section at bottom
-- Only valid PO-mapped items appear in hierarchy
-
-#### UI FIX #5: Buyer Shipment UI Alignment (ERP + Vendor)
-- ERP BuyerShipmentModule completely rewritten:
-  - Progress bar with FIXED ordered_qty denominator
-  - Dispatch history in expanded rows and detail modal
-  - Summary items per-SKU with ordered/shipped/remaining
-  - Correct status badges based on progress_pct
-- Vendor Portal buyer shipment updated:
-  - Progress bar with FIXED ordered_qty
-  - Dispatch history shows serial_number, cumulative totals, remaining
-  - Status derived from progress_pct (not stale ship_status)
+#### Frontend Changes
+- **New file**: `/app/components/erp/ImportExportPanel.jsx` — Reusable Import/Export component
+- **Updated**: ProductsModule.jsx → Import Products button
+- **Updated**: GarmentsModule.jsx → Import Vendors button
+- **Updated**: ProductionPOModule.jsx → Import PO + Export Excel buttons
+- **Updated**: VendorShipmentModule.jsx → Export Excel button
+- **Updated**: BuyerShipmentModule.jsx → Export Excel button
+- **Updated**: ManualInvoiceModule.jsx → Export Excel button
+- **Updated**: ReportsModule.jsx → Server-side Excel export with fallback
 
 ### Test Focus:
-1. GET /api/distribusi-kerja returns hierarchy with valid rows only
-2. GET /api/buyer-shipments returns correct total_ordered/total_shipped/remaining
-3. GET /api/buyer-shipments/{id} returns dispatches array
-4. GET /api/buyer-shipment-dispatches returns grouped dispatches
-5. Additional shipment items don't create standalone PO rows
-   - `?type=buyer-shipment&id=...` → Surat Jalan Buyer
-   - `?type=material-request&id=...` → Surat Permohonan Material
-6. Export PDF buttons added to: Production PO detail, Vendor Shipment detail, Buyer Shipment detail, Material Request detail
+1. POST /api/import-data with type=products — should create products + variants
+2. POST /api/import-data with type=garments — should create vendors + user accounts
+3. POST /api/import-data with type=production-pos — should create POs + items
+4. GET /api/import-template?type=products — should return downloadable XLSX
+5. GET /api/import-template?type=garments — should return downloadable XLSX
+6. GET /api/import-template?type=production-pos — should return downloadable XLSX
+7. GET /api/export-excel?type=production-pos — should return XLSX with PO data
+8. GET /api/export-excel?type=vendor-shipments — should return XLSX
+9. GET /api/export-excel?type=buyer-shipments — should return XLSX
+10. GET /api/export-excel?type=report-production — should return XLSX
+11. GET /api/export-excel?type=invoices — should return XLSX
+12. Data conflict: Create 2 PO items with identical SKU/serial/size/color - verify they remain distinct in distribusi-kerja and buyer-shipments
+
+### Credentials
+- Admin: admin@garment.com / Admin@123
+- Base URL: http://localhost:3000
 
 #### FASE 4 - Dashboard API:
 7. **ERP Dashboard API** - now includes: activeJobs, pendingShipments, pendingAdditionalRequests, pendingReplacementRequests, pendingReturns, totalBuyerShipments, globalProgressPct, totalProducedGlobal

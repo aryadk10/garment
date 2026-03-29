@@ -7,6 +7,7 @@ import StatusBadge from './StatusBadge';
 import ConfirmDialog from './ConfirmDialog';
 import FileAttachmentPanel from './FileAttachmentPanel';
 import SearchableSelect from './SearchableSelect';
+import ImportExportPanel from './ImportExportPanel';
 
 const TABS = [
   { id: 'shipments', label: 'Daftar Shipment', icon: Truck },
@@ -230,12 +231,15 @@ function ShipmentList({ token, userRole }) {
           className="flex-1 max-w-xs border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           value={search} onChange={e => setSearch(e.target.value)}
         />
-        {canEdit && (
-          <button onClick={() => { setForm({ shipment_number: '', delivery_note_number: '', vendor_id: '', shipment_date: new Date().toISOString().split('T')[0], notes: '', items: [] }); setSelectedPO(null); setPoItems([]); setShowModal(true); }}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
-            <Plus className="w-4 h-4" /> Buat Shipment Normal
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          <ImportExportPanel token={token} importType={null} exportType="vendor-shipments" />
+          {canEdit && (
+            <button onClick={() => { setForm({ shipment_number: '', delivery_note_number: '', vendor_id: '', shipment_date: new Date().toISOString().split('T')[0], notes: '', items: [] }); setSelectedPO(null); setPoItems([]); setShowModal(true); }}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
+              <Plus className="w-4 h-4" /> Buat Shipment Normal
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Custom hierarchical table */}

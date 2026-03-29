@@ -6,6 +6,7 @@ import Modal from './Modal';
 import StatusBadge from './StatusBadge';
 import ConfirmDialog from './ConfirmDialog';
 import FileAttachmentPanel from './FileAttachmentPanel';
+import ImportExportPanel from './ImportExportPanel';
 
 export default function BuyerShipmentModule({ token, userRole }) {
   const [shipments, setShipments] = useState([]);
@@ -301,12 +302,15 @@ export default function BuyerShipmentModule({ token, userRole }) {
         })}
       </div>
 
-      {canEdit && (
-        <button onClick={() => { setShowModal(true); setForm({ shipment_number: '', po_id: '', shipment_date: new Date().toISOString().split('T')[0], notes: '', items: [] }); }}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 shadow-sm">
-          <Plus className="w-4 h-4" /> Buat Buyer Shipment
-        </button>
-      )}
+      <div className="flex items-center gap-2">
+        {canEdit && (
+          <button onClick={() => { setShowModal(true); setForm({ shipment_number: '', po_id: '', shipment_date: new Date().toISOString().split('T')[0], notes: '', items: [] }); }}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 shadow-sm">
+            <Plus className="w-4 h-4" /> Buat Buyer Shipment
+          </button>
+        )}
+        <ImportExportPanel token={token} importType={null} exportType="buyer-shipments" />
+      </div>
 
       <DataTable columns={columns} data={shipments} loading={loading}
         expandedRow={expandedRow}

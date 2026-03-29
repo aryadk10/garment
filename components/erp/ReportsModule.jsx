@@ -76,32 +76,44 @@ export default function ReportsModule({ token }) {
     setFilters({ date_from: '', date_to: '', vendor_id: '', po_id: '', serial_number: '', status: '' });
   };
 
-  // Excel export using xlsx
+  // Excel export using server-side endpoint
   const exportToExcel = async () => {
     if (!data.length) return;
     try {
-      const XLSX = (await import('xlsx')).default || (await import('xlsx'));
-      const colDefs = getColumns();
-      const headers = colDefs.map(c => c.label);
-      const rows = data.map(row => colDefs.map(c => {
-        const val = row[c.key];
-        if (c.format === 'date') return fmtDate(val);
-        if (c.format === 'currency') return Number(val || 0);
-        if (c.format === 'number') return Number(val || 0);
-        return val ?? '';
-      }));
-      const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-
-      // Auto width
-      const colWidths = headers.map((h, i) => {
-        const maxLen = Math.max(h.length, ...rows.map(r => String(r[i] || '').length));
-        return { wch: Math.min(maxLen + 2, 30) };
+      const params = new URLSearchParams({ type: `report-${activeReport}` });
+      Object.entries(filters).forEach(([k, v]) => { if (v) params.append(k, v); });
+      const res = await fetch(`/api/export-excel?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` }
       });
-      ws['!cols'] = colWidths;
-
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, activeReport);
-      XLSX.writeFile(wb, `laporan_${activeReport}_${new Date().toISOString().split('T')[0]}.xlsx`);
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `laporan_${activeReport}_${new Date().toISOString().split('T')[0]}.xlsx`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else {
+        // Fallback to client-side export
+        const XLSX = (await import('xlsx')).default || (await import('xlsx'));
+        const colDefs = getColumns();
+        const headers = colDefs.map(c => c.label);
+        const rows = data.map(row => colDefs.map(c => {
+          const val = row[c.key];
+          if (c.format === 'date') return fmtDate(val);
+          if (c.format === 'currency') return Number(val || 0);
+          if (c.format === 'number') return Number(val || 0);
+          return val ?? '';
+        }));
+        const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+        const colWidths = headers.map((h, i) => ({
+          wch: Math.min(Math.max(h.length, ...rows.map(r => String(r[i] || '').length)) + 2, 30)
+        }));
+        ws['!cols'] = colWidths;
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, activeReport);
+        XLSX.writeFile(wb, `laporan_${activeReport}_${new Date().toISOString().split('T')[0]}.xlsx`);
+      }
     } catch (e) {
       console.error('Excel export error:', e);
       alert('Gagal export Excel: ' + e.message);
@@ -112,7 +124,9 @@ export default function ReportsModule({ token }) {
   const exportToPDF = async () => {
     if (!data.length) return;
     try {
-      const res = await fetch(`/api/export-pdf?type=report-${activeReport}`, {
+      const params = new URLSearchParams({ type: `report-${activeReport}` });
+      Object.entries(filters).forEach(([k, v]) => { if (v) params.append(k, v); });
+      const res = await fetch(`/api/export-pdf?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -125,10 +139,10 @@ export default function ReportsModule({ token }) {
         URL.revokeObjectURL(url);
       } else {
         // Fallback: CSV download
-        exportToCSV();
+        alert('PDF export gagal, coba export Excel/CSV sebagai alternatif');
       }
     } catch (e) {
-      exportToCSV();
+      alert('Error: ' + e.message);
     }
   };
 
@@ -440,6 +454,10 @@ export default function ReportsModule({ token }) {
             <button onClick={exportToExcel} disabled={!data.length}
               className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed">
               <Download className="w-3.5 h-3.5" /> Excel
+            </button>
+            <button onClick={exportToPDF} disabled={!data.length}
+              className="flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed">
+              <FileText className="w-3.5 h-3.5" /> PDF
             </button>
             <button onClick={exportToCSV} disabled={!data.length}
               className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
